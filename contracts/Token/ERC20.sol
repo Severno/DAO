@@ -102,6 +102,10 @@ contract ERC20 is IERC20Interface {
         return _allowances[tokenOwner][spender];
     }
 
+    function getMsgSender() external view returns (address) {
+        return msg.sender;
+    }
+
     function _transfer(
         address sender,
         address to,

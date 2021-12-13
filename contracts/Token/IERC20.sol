@@ -65,6 +65,8 @@ interface IERC20Interface {
         view
         returns (uint256);
 
+    function getMsgSender() external view returns (address);
+
     /**
      * @dev MUST trigger when tokens are transferred, including zero value transfers.
      * A token contract which creates new tokens SHOULD trigger a Transfer event with the 'from' address set to 0x0 when tokens are created.
