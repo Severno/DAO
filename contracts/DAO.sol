@@ -1,29 +1,15 @@
 // SPDX-License-Identifier: MIT
 import "./Token/CRGToken.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
 
 pragma solidity 0.8.10;
 
-interface DAOInterface {
-    function newProposal(
-        address _recipient,
-        string memory _description,
-        bytes memory _byteCode,
-        uint64 _votingDeadline
-    ) external payable returns (uint256 _proposalId);
-}
-
 contract DAO {
-    string name;
-    string symbol;
-    address tokenAddress;
-
     uint256 proposalId;
     uint256 minQuorum;
 
-    mapping(address => uint256) private _balances;
+    CRGToken private token;
 
+    mapping(address => uint256) private _balances;
     mapping(uint256 => Proposal) proposals;
 
     struct Proposal {
@@ -39,16 +25,14 @@ contract DAO {
         mapping(address => uint256) voters;
     }
 
-    // _minQuorum < 100%
-    constructor(
-        string memory _name,
-        string memory _symbol,
-        address _tokenAddress,
-        uint256 _minQuorum
-    ) isValidMinQuorum(_minQuorum) {
-        name = _name;
-        symbol = _symbol;
-        tokenAddress = _tokenAddress;
+    /** @notice Creates DAO contract.
+     * @param _tokenAddress The address of the token that wiil be used for voting.
+     * @param _minQuorum Minimum quorum for successful voting.
+     */
+    constructor(address _tokenAddress, uint256 _minQuorum)
+        isValidMinQuorum(_minQuorum)
+    {
+        token = CRGToken(_tokenAddress);
         minQuorum = _minQuorum;
     }
 
@@ -62,7 +46,7 @@ contract DAO {
 
     modifier onlyTokenHolders() {
         require(
-            CRGToken(tokenAddress).balanceOf(msg.sender) > 0,
+            token.balanceOf(msg.sender) > 0,
             "DAO: You are not a token owner"
         );
         _;
@@ -70,7 +54,7 @@ contract DAO {
 
     modifier shouldHasEnoughBalance() {
         require(
-            CRGToken(tokenAddress).balanceOf(msg.sender) > msg.value,
+            token.balanceOf(msg.sender) > msg.value,
             "DAO: You don't have enough balance to make the transaction"
         );
         _;
@@ -79,7 +63,7 @@ contract DAO {
     modifier checkTransactionAmount() {
         require(
             msg.value != 0,
-            "You have to specify the amount you want to donate"
+            "DAO: You have to specify the amount you want to donate"
         );
         _;
     }
@@ -92,6 +76,30 @@ contract DAO {
         _;
     }
 
+    modifier proposalIsOpened(uint256 _proposalId) {
+        require(
+            proposals[_proposalId].open,
+            "DAO: You're trying to call proposal that's already closed"
+        );
+        _;
+    }
+
+    modifier proposalHasEnoughQuorum(uint256 _proposalId) {
+        require(
+            _isProposalHasEnoughQuorum(_proposalId),
+            "DAO: You're trying to call proposal who has insufficient quorum"
+        );
+        _;
+    }
+
+    modifier proposalIsOutdated(uint256 _proposalId) {
+        require(
+            !_isProposalDeadlinePassed(_proposalId),
+            "DAO: You're trying to call proposal that's is outdated"
+        );
+        _;
+    }
+
     modifier shouldBeAVoter(uint256 _proposalId) {
         require(
             proposals[_proposalId].voters[msg.sender] != 0,
@@ -100,6 +108,13 @@ contract DAO {
         _;
     }
 
+    /** @notice Create new proposal.
+     * @param _recipient The address of the contract to be be called.
+     * @param _description Proposal description.
+     * @param _byteCode ByteCode to execute if proposal will pass.
+     * @param _votingDeadline How many days of voting will last.
+     * @return _proposalId New proposal ID.
+     */
     function newProposal(
         address _recipient,
         string memory _description,
@@ -116,9 +131,33 @@ contract DAO {
         proposal.open = true;
 
         emit ProposalCreated(_recipient, msg.sender, _byteCode, proposalId);
+
         proposalId++;
 
         return proposalId - 1;
+    }
+
+    /** @notice Get proposal information.
+     * @param _proposalId Id of the calling proposal.
+     * @return _description Proposal description.
+     * @return _open Voting status, true if still voting, false if voting ends.
+     * @return _sum Sum of voting tokens.
+     */
+    function getProposal(uint256 _proposalId)
+        external
+        view
+        proposalExist(_proposalId)
+        returns (
+            string memory _description,
+            bool _open,
+            uint256 _sum
+        )
+    {
+        return (
+            proposals[_proposalId].description,
+            proposals[_proposalId].open,
+            proposals[_proposalId].sum
+        );
     }
 
     function vote(uint256 _proposalId)
@@ -126,15 +165,14 @@ contract DAO {
         payable
         onlyTokenHolders
         shouldHasEnoughBalance
+        proposalExist(_proposalId)
+        proposalIsOpened(_proposalId)
     {
-        uint256 amount = msg.value;
         Proposal storage proposal = proposals[_proposalId];
 
-        CRGToken(tokenAddress).transferFrom(
-            msg.sender,
-            address(this),
-            msg.value
-        );
+        uint256 amount = msg.value;
+
+        token.transferFrom(msg.sender, address(this), msg.value);
 
         proposal.voters[msg.sender] = amount;
         proposal.sum += amount;
@@ -142,107 +180,71 @@ contract DAO {
         emit Voted(_proposalId, msg.sender, amount);
     }
 
+    function unVote(uint256 _proposalId) external shouldBeAVoter(_proposalId) {
+        Proposal storage proposal = proposals[_proposalId];
+
+        uint256 voterAmount = proposal.voters[msg.sender];
+
+        token.transfer(msg.sender, voterAmount);
+
+        proposal.sum -= voterAmount;
+        proposal.voters[msg.sender] = 0;
+
+        emit UnVoted(_proposalId, msg.sender, voterAmount);
+    }
+
     function executeProposal(uint256 _proposalId)
         external
         proposalExist(_proposalId)
+        proposalIsOpened(_proposalId)
+        proposalHasEnoughQuorum(_proposalId)
         returns (bool _success)
     {
-        Proposal storage proposal = proposals[_proposalId];
-
-        require(
-            proposal.open,
-            "DAO: You're trying to call proposal that's already closed"
-        );
-
-        // require(
-        //     _isProposalHasEnoughQuorum(_proposalId),
-        //     "DAO: Proposal doesn't get enough votes to be executed"
-        // );
-
-        if (
-            _isProposalDeadlinePassed(_proposalId) &&
-            !_isProposalHasEnoughQuorum(_proposalId)
-        ) {
-            closeProposal(_proposalId);
-            return true;
-        }
-
-        if (
-            proposal.open &&
-            _isProposalHasEnoughQuorum(_proposalId) &&
-            !_isProposalDeadlinePassed(_proposalId)
-        ) {
-            (bool success, ) = proposal.recipient.call(proposal.proposalHash);
-
-            require(success, "DAO: The called function is not in the contract");
-
-            emit ProposalExecutionSucceeded(
-                proposal.proposalId,
-                proposal.description,
-                proposal.recipient,
-                proposal.sum,
-                CRGToken(tokenAddress).totalSupply(),
-                CRGToken(tokenAddress).totalSupply() * minQuorum
-            );
-
-            closeProposal(_proposalId);
-
-            return true;
-        }
+        if (_closeOutdatedProposal(_proposalId)) return true;
+        if (_closeSuccessfulProposal(_proposalId)) return true;
 
         return false;
     }
 
-    function closeProposal(uint256 _proposalId) internal {
+    function _closeProposal(uint256 _proposalId, bool _result) internal {
         proposals[_proposalId].open = false;
+
+        emit ProposalClosed(
+            _proposalId,
+            proposals[_proposalId].description,
+            _result
+        );
     }
 
-    function unVote(uint256 _proposalId) external shouldBeAVoter(_proposalId) {
-        Proposal storage proposal = proposals[_proposalId];
-        uint256 voterAmount = proposal.voters[msg.sender];
+    function _closeSuccessfulProposal(uint256 _proposalId)
+        internal
+        returns (bool success)
+    {
+        if (
+            !_isProposalDeadlinePassed(_proposalId) &&
+            _isProposalHasEnoughQuorum(_proposalId)
+        ) {
+            _executeProposal(_proposalId);
+            _closeProposal(_proposalId, true);
 
-        require(
-            block.timestamp >= proposal.votingDeadline,
-            "DAO: Can't unvote completed voting"
-        );
-
-        CRGToken(tokenAddress).transferFrom(
-            address(this),
-            msg.sender,
-            voterAmount
-        );
-
-        proposal.sum -= voterAmount;
-        proposal.voters[msg.sender] = 0;
+            return true;
+        }
+        return false;
     }
 
-    function getBalance() external view returns (uint256) {
-        return CRGToken(tokenAddress).balanceOf(address(this));
-    }
+    function _closeOutdatedProposal(uint256 _proposalId)
+        internal
+        returns (bool success)
+    {
+        if (
+            _isProposalDeadlinePassed(_proposalId) &&
+            !_isProposalHasEnoughQuorum(_proposalId)
+        ) {
+            _closeProposal(_proposalId, false);
 
-    function approveSomething() public payable {
-        CRGToken(tokenAddress).approve(address(this), 100);
-        // CRGToken(tokenAddress).transfer(address(this), 100);
-        address msgSender = CRGToken(tokenAddress).getMsgSender();
-        uint256 balance = CRGToken(tokenAddress).balanceOf(address(this));
-        uint256 balance1 = CRGToken(tokenAddress).balanceOf(msg.sender);
-        uint256 allowance = CRGToken(tokenAddress).allowance(
-            msg.sender,
-            address(this)
-        );
-        uint256 allowance1 = CRGToken(tokenAddress).allowance(
-            address(this),
-            msg.sender
-        );
-        emit Allow(
-            balance,
-            balance1,
-            allowance,
-            allowance1,
-            address(this),
-            msg.sender,
-            msgSender
-        );
+            return true;
+        }
+        return false;
     }
 
     function _isProposalHasEnoughQuorum(uint256 _proposalId)
@@ -250,9 +252,10 @@ contract DAO {
         view
         returns (bool)
     {
-        uint256 totalSupply = CRGToken(tokenAddress).totalSupply();
+        uint256 totalSupply = token.totalSupply();
 
-        return proposals[_proposalId].sum >= ((totalSupply / 100) * minQuorum);
+        return
+            proposals[_proposalId].sum >= (((totalSupply / 100) * minQuorum));
     }
 
     function _isProposalDeadlinePassed(uint256 _proposalId)
@@ -263,15 +266,20 @@ contract DAO {
         return block.timestamp > proposals[_proposalId].votingDeadline;
     }
 
-    event Allow(
-        uint256 baalnce,
-        uint256 balance1,
-        uint256 amount,
-        uint256 amount1,
-        address _contract,
-        address _msgSender,
-        address _msgSenderErc
-    );
+    function _executeProposal(uint256 _proposalId) internal {
+        Proposal storage proposal = proposals[_proposalId];
+
+        (bool success, ) = proposal.recipient.call(proposal.proposalHash);
+
+        require(success, "DAO: The called function is not in the contract");
+
+        emit ProposalExecutionSucceeded(
+            proposal.proposalId,
+            proposal.description,
+            proposal.recipient
+        );
+    }
+
     event ProposalCreated(
         address indexed _recipient,
         address indexed _creator,
@@ -281,10 +289,13 @@ contract DAO {
     event ProposalExecutionSucceeded(
         uint256 _proposalId,
         string _description,
-        address indexed _recipient,
-        uint256 sum,
-        uint256 totalSupply,
-        uint256 quorum
+        address indexed _recipient
     );
     event Voted(uint256 _proposalId, address indexed _voter, uint256 _amount);
+    event UnVoted(uint256 _proposalId, address indexed _voter, uint256 _amount);
+    event ProposalClosed(
+        uint256 _proposalId,
+        string _description,
+        bool _result
+    );
 }

@@ -1,4 +1,3 @@
-import { getConfig } from "./../utils/networks";
 import "@nomiclabs/hardhat-ethers";
 
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/dist/src/signers";
@@ -13,9 +12,9 @@ import hre from "hardhat";
 import { DAO__factory } from "../typechain-types/factories/DAO__factory";
 import { DAO } from "../typechain-types/DAO";
 import CRGToken_json from "../artifacts/contracts/Token/CRGToken.sol/CRGToken.json";
-import { id } from "ethers/lib/utils";
 
 const { ethers } = hre;
+
 const name = "Corgy";
 const symbol = "CRG";
 const initialSupply = "1000";
@@ -48,11 +47,11 @@ let nonExistedTokenFunction = new ethers.utils.Interface(
 ).encodeFunctionData(nonExistedTokenFunctionName, []);
 
 let DAO: DAO__factory;
-let dao: DAO;
+let dao: DAO & Contract;
 const proposalDescription = "Let's make DAO great again";
 const proposalId = 0;
 let proposalRecipient: string;
-const votingDeadline: number = Number(new Date(Date.now() + 86400000 * 3));
+let votingDeadline: number;
 const minQuorum = BigNumber.from(32);
 
 let provider: BaseProvider;
@@ -62,8 +61,6 @@ let bob: SignerWithAddress;
 let ownerBalance: string;
 let aliceBalance: string;
 let bobBalance: string;
-
-console.log(`votingDeadline`, votingDeadline);
 
 describe("Proposals", async function () {
   beforeEach(async function () {
@@ -85,7 +82,8 @@ describe("Proposals", async function () {
 
     DAO = await ethers.getContractFactory("DAO");
     dao = await DAO.deploy(name, symbol, tokenAddress, minQuorum);
-    console.log(`ex`, existedTokenFunction, nonExistedTokenFunction);
+
+    votingDeadline = (await ethers.provider.getBlock(1)).timestamp + 864 * 3;
   });
 
   describe("newProposal", async function () {
@@ -119,23 +117,6 @@ describe("Proposals", async function () {
           proposalId
         );
     });
-
-    it("should return proposalId", async function () {
-      const _proposalId = await dao.newProposal(
-        proposalRecipient,
-        proposalDescription,
-        existedTokenFunction,
-        votingDeadline
-      );
-
-      console.log(`_proposalId`, _proposalId);
-
-      // expect(
-      //   ethers.utils.formatUnits(
-      //     await
-      //   )
-      // ).to.be.equal(proposalId);
-    });
   });
 
   describe("executeProposal", async function () {
@@ -146,6 +127,14 @@ describe("Proposals", async function () {
         nonExistedTokenFunction,
         votingDeadline
       );
+
+      const amount = ethers.utils.parseUnits("500", decimals);
+
+      await token.approve(dao.address, amount);
+
+      await dao.vote(proposalId, {
+        value: ethers.utils.parseUnits("500", decimals),
+      });
 
       await expect(dao.executeProposal(proposalId)).to.be.revertedWith(
         requiredMessage.nonExistedFunction
@@ -172,32 +161,14 @@ describe("Proposals", async function () {
         existedTokenFunction,
         votingDeadline
       );
-      console.log(
-        `ethers.utils.parseUnits("500", decimals)`,
-        ethers.utils.formatEther(ethers.utils.parseUnits("500", decimals))
-      );
-      await token.approve(
-        dao.address,
-        ethers.utils.parseUnits("500", decimals)
-      );
+      const amount = ethers.utils.parseUnits("500", decimals);
+
+      await token.approve(dao.address, amount);
 
       await dao.vote(proposalId, {
         value: ethers.utils.parseUnits("500", decimals),
       });
 
-      const tx = await dao.executeProposal(proposalId);
-
-      let receipt = await tx.wait();
-
-      receipt.events
-        ?.filter((x) => {
-          return x.event == "ProposalExecutionSucceeded";
-        })
-        .forEach((x) => {
-          x?.args?.forEach((y) => {
-            console.log(y);
-          });
-        });
       await expect(dao.executeProposal(proposalId))
         .to.emit(dao, "ProposalExecutionSucceeded")
         .withArgs(proposalId, proposalDescription, proposalRecipient);
@@ -291,7 +262,9 @@ describe("Proposals", async function () {
         "DAO balance is incorrect"
       ).to.be.equal(amount);
     });
-    it("test allowance", async () => {
+  });
+  describe("unVote", async function () {
+    it("should successfully unvote and return tokens", async () => {
       await dao.newProposal(
         proposalRecipient,
         proposalDescription,
@@ -299,40 +272,55 @@ describe("Proposals", async function () {
         votingDeadline
       );
 
-      const ownBalanceBefore = ethers.utils.formatEther(
-        await token.balanceOf(owner.address)
+      await token.approve(dao.address, amount);
+
+      await dao.vote(proposalId, { value: amount });
+
+      const subBalance = ethers.utils.parseEther(ownerBalance).sub(amount);
+
+      expect(
+        await token.balanceOf(owner.address),
+        "Owner balance should be ownerBalance - amount"
+      ).to.be.equal(subBalance);
+
+      await dao.unVote(proposalId);
+
+      expect(
+        await token.balanceOf(dao.address),
+        "DAO balance should be 0"
+      ).to.be.equal(ethers.utils.parseUnits("0"));
+
+      expect(
+        await token.balanceOf(owner.address),
+        "Owner balance should be ownerBalance"
+      ).to.be.equal(ethers.utils.parseUnits("1000"));
+    });
+  });
+  describe("getProposal", async function () {
+    it("should get proposal info", async () => {
+      await dao.newProposal(
+        proposalRecipient,
+        proposalDescription,
+        existedTokenFunction,
+        votingDeadline
       );
 
-      const tx = await dao.approveSomething();
+      await token.approve(dao.address, amount);
 
-      let receipt = await tx.wait();
+      await dao.vote(proposalId, { value: amount });
 
-      receipt.events
-        ?.filter((x) => {
-          return x.event == "Allow";
-        })
-        .forEach((x) => {
-          x?.args?.forEach((y) => {
-            console.log(y);
-          });
-        });
+      const [descr, votingResult, sum] = await dao.getProposal(proposalId);
 
-      const transactionHash = receipt!.events![0].transactionHash;
+      expect(
+        [descr, votingResult, sum],
+        "getProposal() should return description, open status and voters sum"
+      ).to.deep.equal([proposalDescription, true, amount]);
+    });
 
-      provider.getTransaction(transactionHash).then(function (transaction) {
-        console.log(transaction);
-      });
-
-      console.log(receipt.events);
-      // console.log(tx1);
-
-      // const ownBalanceAfter = ethers.utils.formatEther(
-      //   await token.balanceOf(owner.address)
-      // );
-
-      // console.log(`ownBalance`, ownBalanceAfter, ownBalanceBefore);
-
-      // const subBalance = ethers.utils.parseEther(ownerBalance).sub(amount);
+    it("should revert if proposal doesn't exist", async () => {
+      await expect(dao.getProposal(0)).to.be.revertedWith(
+        "DAO: Proposal doesn't exist"
+      );
     });
   });
 });

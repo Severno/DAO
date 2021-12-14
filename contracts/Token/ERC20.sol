@@ -23,10 +23,25 @@ contract ERC20 is IERC20Interface {
         _decimals = decimals_;
     }
 
-    function _mint(address account, uint256 amount) internal {
+    function _burn(address from, uint256 amount) internal returns (bool) {
+        require(
+            _totalSupply >= amount || _balances[from] >= amount,
+            "ERC20: Not enough tokens to burn"
+        );
+
+        _totalSupply -= amount;
+        _balances[from] -= amount;
+
+        emit Transfer(from, address(0), amount);
+        return true;
+    }
+
+    function _mint(address to, uint256 amount) internal returns (bool) {
         _totalSupply += amount;
-        _balances[account] += amount;
-        emit Transfer(address(0), account, amount);
+        _balances[to] += amount;
+
+        emit Transfer(address(0), to, amount);
+        return true;
     }
 
     function totalSupply() external view override returns (uint256) {
@@ -100,10 +115,6 @@ contract ERC20 is IERC20Interface {
         returns (uint256)
     {
         return _allowances[tokenOwner][spender];
-    }
-
-    function getMsgSender() external view returns (address) {
-        return msg.sender;
     }
 
     function _transfer(
