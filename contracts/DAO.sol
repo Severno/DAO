@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
+import "hardhat/console.sol";
 import "./Token/CRGToken.sol";
 
 pragma solidity 0.8.10;
 
+/** @title DAO contract.  */
 contract DAO {
     uint256 proposalId;
     uint256 minQuorum;
@@ -144,12 +146,18 @@ contract DAO {
         );
     }
 
+    /** @notice Deposit tokens to DAO.
+     * @param _amount Amount deposited tokens.
+     */
     function deposit(uint256 _amount) external payable {
         token.transferFrom(msg.sender, address(this), _amount);
 
-        balances[msg.sender] += token.allowance(msg.sender, address(this));
+        balances[msg.sender] += _amount;
     }
 
+    /** @notice Withdraw tokens from DAO to user.
+     * @param _amount Amount withdraw tokens.
+     */
     function withdraw(uint256 _amount) external payable {
         require(
             balances[msg.sender] >= _amount,
@@ -166,13 +174,12 @@ contract DAO {
      */
     function vote(uint256 _proposalId, uint256 _amount)
         external
-        payable
         proposalInProgress(_proposalId)
         proposalExist(_proposalId)
         proposalIsOpened(_proposalId)
     {
         require(
-            balances[msg.sender] - _amount > 0,
+            balances[msg.sender] >= _amount,
             "DAO: You have not enought tokens deposited for voting"
         );
 
@@ -212,11 +219,25 @@ contract DAO {
         return false;
     }
 
+    /** @notice Get how many tokens user stores on DAO contract.
+     */
+    function getVoterDaoBalance() external view returns (uint256) {
+        return balances[msg.sender];
+    }
+
+    /** @notice Desctribute tokens for a voting.
+     * @param _proposalId Id of the calling proposal.
+     * @param _amount Id of the calling proposal.
+     */
     function _distributeTokensForVoting(uint256 _proposalId, uint256 _amount)
         internal
     {
         proposals[_proposalId].voters[msg.sender] = _amount;
         proposals[_proposalId].sum += _amount;
+        require(
+            balances[msg.sender] >= _amount,
+            "DAO: You have not enought tokens deposited for voting"
+        );
         balances[msg.sender] -= _amount;
     }
 
@@ -282,7 +303,12 @@ contract DAO {
         returns (bool)
     {
         uint256 totalSupply = token.totalSupply();
-
+        console.log(
+            "quorum",
+            proposals[_proposalId].sum,
+            totalSupply,
+            (((totalSupply / 100) * minQuorum))
+        );
         return
             proposals[_proposalId].sum >= (((totalSupply / 100) * minQuorum));
     }

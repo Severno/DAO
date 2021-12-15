@@ -165,7 +165,9 @@ describe("Proposals", async function () {
 
       await token.approve(dao.address, amount);
 
-      await dao.vote(proposalId, ethers.utils.parseUnits("500", decimals));
+      await dao.deposit(amount);
+
+      await dao.vote(proposalId, amount);
 
       await expect(dao.executeProposal(proposalId))
         .to.emit(dao, "ProposalExecutionSucceeded")
@@ -184,9 +186,9 @@ describe("Proposals", async function () {
 
       await token.approve(dao.address, amount);
 
-      await expect(
-        dao.vote(proposalId, ethers.utils.parseUnits("500", decimals))
-      )
+      await dao.deposit(amount);
+
+      await expect(dao.vote(proposalId, amount))
         .to.emit(dao, "Voted")
         .withArgs(proposalId, owner.address, amount);
     });
@@ -203,12 +205,14 @@ describe("Proposals", async function () {
 
       await token.connect(alice).approve(dao.address, bigAmount);
 
+      await dao.connect(alice).deposit(amount);
+
       await expect(dao.connect(alice).vote(proposalId, amount))
         .to.emit(dao, "Voted")
         .withArgs(proposalId, alice.address, amount);
     });
 
-    it("should revert if not a token owner", async () => {
+    it("should revert if not have enough token balance on DAO", async () => {
       await dao.newProposal(
         proposalRecipient,
         proposalDescription,
@@ -220,23 +224,8 @@ describe("Proposals", async function () {
         dao
           .connect(alice)
           .vote(proposalId, ethers.utils.parseUnits("500", decimals))
-      ).to.be.revertedWith("DAO: You are not a token owner");
-    });
-
-    it("should revert if sender doesn't have enough token balance", async () => {
-      await dao.newProposal(
-        proposalRecipient,
-        proposalDescription,
-        existedTokenFunction,
-        votingDeadline
-      );
-
-      await token.transfer(alice.address, amount);
-
-      await expect(
-        dao.connect(alice).vote(proposalId, bigAmount)
       ).to.be.revertedWith(
-        "DAO: You don't have enough balance to make the transaction"
+        "DAO: You have not enought tokens deposited for voting"
       );
     });
 
@@ -249,6 +238,8 @@ describe("Proposals", async function () {
       );
 
       await token.approve(dao.address, amount);
+
+      await dao.deposit(amount);
 
       await dao.vote(proposalId, amount);
 
@@ -266,7 +257,7 @@ describe("Proposals", async function () {
     });
   });
   describe("unVote", async function () {
-    it("should successfully unvote and return tokens", async () => {
+    it("should successfully unvote and return tokens to voter DAO balance", async () => {
       await dao.newProposal(
         proposalRecipient,
         proposalDescription,
@@ -276,26 +267,15 @@ describe("Proposals", async function () {
 
       await token.approve(dao.address, amount);
 
+      await dao.deposit(amount);
+
       await dao.vote(proposalId, amount);
 
       const subBalance = ethers.utils.parseEther(ownerBalance).sub(amount);
 
-      expect(
-        await token.balanceOf(owner.address),
-        "Owner balance should be ownerBalance - amount"
-      ).to.be.equal(subBalance);
-
       await dao.unVote(proposalId);
 
-      expect(
-        await token.balanceOf(dao.address),
-        "DAO balance should be 0"
-      ).to.be.equal(ethers.utils.parseUnits("0"));
-
-      expect(
-        await token.balanceOf(owner.address),
-        "Owner balance should be ownerBalance"
-      ).to.be.equal(ethers.utils.parseUnits("1000"));
+      expect(amount).to.be.equal(await dao.getVoterDaoBalance());
     });
 
     it("should revert if not a voter", async () => {
@@ -323,6 +303,8 @@ describe("Proposals", async function () {
 
       await token.approve(dao.address, amount);
 
+      await dao.deposit(amount);
+
       await dao.vote(proposalId, amount);
 
       const [descr, votingResult, sum] = await dao.getProposal(proposalId);
@@ -337,6 +319,64 @@ describe("Proposals", async function () {
       await expect(dao.getProposal(0)).to.be.revertedWith(
         "DAO: Proposal doesn't exist"
       );
+    });
+  });
+
+  describe("withdraw", async function () {
+    it("should withdraw tokens from contract to user", async () => {
+      await dao.newProposal(
+        proposalRecipient,
+        proposalDescription,
+        existedTokenFunction,
+        votingDeadline
+      );
+
+      const ownerBalance = await token.balanceOf(owner.address);
+
+      await token.approve(dao.address, amount);
+
+      await dao.deposit(amount);
+
+      await dao.vote(proposalId, amount);
+
+      await dao.unVote(proposalId);
+
+      let tokenOwnerBalanceBeforeWithdrawal = await token.balanceOf(
+        owner.address
+      );
+
+      expect(tokenOwnerBalanceBeforeWithdrawal).to.be.equal(
+        ownerBalance.sub(amount)
+      );
+      await dao.withdraw(amount);
+      expect(await token.balanceOf(owner.address)).to.be.equal(ownerBalance);
+
+      const daoBalance = await token.balanceOf(dao.address);
+      expect(daoBalance).to.be.equal(ethers.utils.parseEther("0"));
+    });
+  });
+
+  describe("deposit", async function () {
+    it("should deposit tokens to DAO contract", async () => {
+      await dao.newProposal(
+        proposalRecipient,
+        proposalDescription,
+        existedTokenFunction,
+        votingDeadline
+      );
+
+      const ownerBalance = await token.balanceOf(owner.address);
+
+      await token.approve(dao.address, amount);
+
+      await dao.deposit(amount);
+
+      expect(ownerBalance.sub(amount)).to.be.equal(
+        await token.balanceOf(owner.address)
+      );
+
+      const daoBalance = await token.balanceOf(dao.address);
+      expect(daoBalance).to.be.equal(amount);
     });
   });
 });

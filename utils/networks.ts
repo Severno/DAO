@@ -10,6 +10,7 @@ export const getConfig = (
   mnemonic: string;
   tokenName: string;
   tokenAddress: string;
+  daoAddress: string;
   tokenSymbol: string;
   tokenDecimals: number;
 } => {
@@ -30,6 +31,7 @@ export const getConfig = (
     tokenName: process.env.TOKEN_NAME || "",
     tokenAddress: process.env.TOKEN_ADDRESS || "",
     tokenSymbol: process.env.TOKEN_SYMBOL || "",
+    daoAddress: process.env.DAO_ADDRESS || "",
     tokenDecimals: Number(process.env.TOKEN_DECIMALS) || 18,
   };
 };

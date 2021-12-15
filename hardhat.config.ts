@@ -6,6 +6,9 @@ import "web3";
 import "./tasks";
 
 import { HardhatUserConfig } from "hardhat/types/config";
+import { getConfig } from "./utils/networks";
+
+const settings = getConfig("bsc_testnet");
 
 /**
  * @type import('hardhat/config').HardhatUserConfig
@@ -30,15 +33,13 @@ const config: HardhatUserConfig = {
       url: "https://data-seed-prebsc-1-s1.binance.org:8545",
       chainId: 97,
       gasPrice: 20000000000,
-      accounts: {
-        mnemonic: "",
-      },
+      accounts: { mnemonic: settings.mnemonic },
     },
     bsc_mainnet: {
       url: "https://bsc-dataseed.binance.org/",
       chainId: 56,
       gasPrice: 20000000000,
-      accounts: { mnemonic: "" },
+      accounts: { mnemonic: settings.mnemonic },
     },
   },
   paths: {
