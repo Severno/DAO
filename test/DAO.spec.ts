@@ -11,7 +11,6 @@ import { expect } from "chai";
 import hre from "hardhat";
 import { DAO__factory } from "../typechain-types/factories/DAO__factory";
 import { DAO } from "../typechain-types/DAO";
-import CRGToken_json from "../artifacts/contracts/Token/CRGToken.sol/CRGToken.json";
 
 const { ethers } = hre;
 
@@ -30,7 +29,6 @@ const requiredMessage = {
 let Token: CRGToken__factory;
 let token: CRGToken;
 let tokenAddress: string;
-let tokenAbiInterface = new ethers.utils.Interface(CRGToken_json.abi);
 const amount = ethers.utils.parseUnits("10", decimals);
 const bigAmount = ethers.utils.parseUnits("20", decimals);
 
@@ -134,7 +132,7 @@ describe("Proposals", async function () {
 
       await dao.deposit(amount);
 
-      await dao.vote(proposalId, amount);
+      await dao.vote(proposalId);
 
       await expect(dao.executeProposal(proposalId)).to.be.revertedWith(
         requiredMessage.nonExistedFunction
@@ -167,7 +165,7 @@ describe("Proposals", async function () {
 
       await dao.deposit(amount);
 
-      await dao.vote(proposalId, amount);
+      await dao.vote(proposalId);
 
       await expect(dao.executeProposal(proposalId))
         .to.emit(dao, "ProposalExecutionSucceeded")
@@ -188,7 +186,7 @@ describe("Proposals", async function () {
 
       await dao.deposit(amount);
 
-      await expect(dao.vote(proposalId, amount))
+      await expect(dao.vote(proposalId))
         .to.emit(dao, "Voted")
         .withArgs(proposalId, owner.address, amount);
     });
@@ -207,7 +205,7 @@ describe("Proposals", async function () {
 
       await dao.connect(alice).deposit(amount);
 
-      await expect(dao.connect(alice).vote(proposalId, amount))
+      await expect(dao.connect(alice).vote(proposalId))
         .to.emit(dao, "Voted")
         .withArgs(proposalId, alice.address, amount);
     });
@@ -220,11 +218,7 @@ describe("Proposals", async function () {
         votingDeadline
       );
 
-      await expect(
-        dao
-          .connect(alice)
-          .vote(proposalId, ethers.utils.parseUnits("500", decimals))
-      ).to.be.revertedWith(
+      await expect(dao.connect(alice).vote(proposalId)).to.be.revertedWith(
         "DAO: You have not enought tokens deposited for voting"
       );
     });
@@ -241,7 +235,7 @@ describe("Proposals", async function () {
 
       await dao.deposit(amount);
 
-      await dao.vote(proposalId, amount);
+      await dao.vote(proposalId);
 
       const subBalance = ethers.utils.parseEther(ownerBalance).sub(amount);
 
@@ -269,7 +263,7 @@ describe("Proposals", async function () {
 
       await dao.deposit(amount);
 
-      await dao.vote(proposalId, amount);
+      await dao.vote(proposalId);
 
       const subBalance = ethers.utils.parseEther(ownerBalance).sub(amount);
 
@@ -305,7 +299,7 @@ describe("Proposals", async function () {
 
       await dao.deposit(amount);
 
-      await dao.vote(proposalId, amount);
+      await dao.vote(proposalId);
 
       const [descr, votingResult, sum] = await dao.getProposal(proposalId);
 
@@ -337,7 +331,7 @@ describe("Proposals", async function () {
 
       await dao.deposit(amount);
 
-      await dao.vote(proposalId, amount);
+      await dao.vote(proposalId);
 
       await dao.unVote(proposalId);
 
@@ -377,6 +371,27 @@ describe("Proposals", async function () {
 
       const daoBalance = await token.balanceOf(dao.address);
       expect(daoBalance).to.be.equal(amount);
+    });
+
+    it("get balance", async () => {
+      await dao.newProposal(
+        proposalRecipient,
+        proposalDescription,
+        existedTokenFunction,
+        votingDeadline
+      );
+
+      const ownerBalance = await token.balanceOf(owner.address);
+
+      await token.approve(dao.address, amount);
+
+      await dao.deposit(amount);
+
+      expect(ownerBalance.sub(amount)).to.be.equal(
+        await token.balanceOf(owner.address)
+      );
+
+      await dao.getVoterDaoBalance();
     });
   });
 });
