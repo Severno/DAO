@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.10;
 
-import "hardhat/console.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./IDAO.sol";
 
@@ -19,11 +18,9 @@ contract DAO is IDAO {
 
     mapping(address => uint256) public withdrawLock; // address => timestamp
     mapping(address => uint256) private balances;
-    // address of delegate, _proposalId, users who deletated
-    mapping(address => mapping(uint256 => address[])) private delegates;
-    // _proposalId, adress user who deletated, Vote struct
-    mapping(uint256 => mapping(address => Vote)) private delegatedVoting;
-    mapping(uint256 => Proposal) proposals;
+    mapping(address => mapping(uint256 => address[])) private delegates; // address of delegate, _proposalId, users who deletated
+    mapping(uint256 => mapping(address => Vote)) private delegatedVoting; // _proposalId, adress user who deletated, Vote struct
+    mapping(uint256 => Proposal) public proposals;
 
     struct Vote {
         uint256 delegated;
@@ -32,7 +29,7 @@ contract DAO is IDAO {
     }
 
     struct Proposal {
-        uint256 amount;
+        uint256 sum;
         uint256 proposalId;
         uint256 votingDeadline;
         address recipient;
@@ -40,7 +37,6 @@ contract DAO is IDAO {
         string description;
         bytes proposalHash;
         bool open;
-        uint256 sum;
         mapping(address => uint256) voters;
     }
 
@@ -112,18 +108,46 @@ contract DAO is IDAO {
         _;
     }
 
+    /** @dev Deposit tokens to DAO.
+     * @param _amount Amount deposited tokens.
+     */
+    function deposit(uint256 _amount) external payable {
+        token.safeTransferFrom(msg.sender, address(this), _amount);
+
+        balances[msg.sender] += _amount;
+
+        emit Deposit(msg.sender, _amount);
+    }
+
+    /** @dev Withdraw tokens from DAO to user.
+     * @param _amount Amount withdraw tokens.
+     */
+    function withdraw(uint256 _amount) external payable {
+        require(
+            withdrawLock[msg.sender] < block.timestamp,
+            "DAO: Can't withdraw before end of vote"
+        );
+        require(
+            balances[msg.sender] >= _amount,
+            "DAO: The withdrawal amount is too large"
+        );
+
+        token.safeTransfer(msg.sender, _amount);
+        balances[msg.sender] -= _amount;
+
+        emit Withdraw(msg.sender, _amount);
+    }
+
     /** @dev Create new proposal.
      * @param _recipient The address of the contract to be be called.
      * @param _description Proposal description.
      * @param _byteCode ByteCode to execute if proposal will pass.
-     * @param _votingDeadline How many days of voting will last in days.
      * @return _proposalId New proposal ID.
      */
     function newProposal(
         address _recipient,
         string memory _description,
-        bytes memory _byteCode,
-        uint64 _votingDeadline
+        bytes memory _byteCode
     ) external payable onlyTokenHolder returns (uint256 _proposalId) {
         Proposal storage proposal = proposals[proposalId];
 
@@ -131,7 +155,7 @@ contract DAO is IDAO {
         proposal.recipient = _recipient;
         proposal.description = _description;
         proposal.proposalHash = _byteCode;
-        proposal.votingDeadline = _votingDeadline;
+        proposal.votingDeadline = block.timestamp + votingPeriod;
         proposal.open = true;
 
         emit ProposalCreated(_recipient, msg.sender, _byteCode, proposalId);
@@ -164,36 +188,6 @@ contract DAO is IDAO {
         );
     }
 
-    /** @dev Deposit tokens to DAO.
-     * @param _amount Amount deposited tokens.
-     */
-    function deposit(uint256 _amount) external payable {
-        token.transferFrom(msg.sender, address(this), _amount);
-
-        balances[msg.sender] += _amount;
-
-        emit Deposit(msg.sender, _amount);
-    }
-
-    /** @dev Withdraw tokens from DAO to user.
-     * @param _amount Amount withdraw tokens.
-     */
-    function withdraw(uint256 _amount) external payable {
-        require(
-            withdrawLock[msg.sender] < block.timestamp,
-            "DAO: Can't withdraw before end of vote"
-        );
-        require(
-            balances[msg.sender] >= _amount,
-            "DAO: The withdrawal amount is too large"
-        );
-
-        token.safeTransfer(msg.sender, _amount);
-        balances[msg.sender] -= _amount;
-
-        emit Withdraw(msg.sender, _amount);
-    }
-
     /** @dev Lock user's tokens to the contract to vote for the proposal.
      * @param _proposalId Id of the calling proposal.
      */
@@ -204,30 +198,14 @@ contract DAO is IDAO {
         proposalIsOpened(_proposalId)
     {
         require(
-            balances[msg.sender] >= 0,
+            balances[msg.sender] > 0 ||
+                delegatedVoting[_proposalId][msg.sender].delegated > 0,
             "DAO: You have not enought tokens deposited for voting"
         );
 
         _distributeTokensForVoting(_proposalId);
 
         emit Voted(_proposalId, msg.sender);
-    }
-
-    function delegate(uint256 _proposalId, address _to)
-        external
-        proposalInProgress(_proposalId)
-        proposalExist(_proposalId)
-        proposalIsOpened(_proposalId)
-    {
-        require(
-            msg.sender != _to,
-            "DAO: You can't delegate tokens too yoursels"
-        );
-
-        delegates[_to][_proposalId].push(msg.sender);
-        delegatedVoting[_proposalId][_to].delegated += balances[msg.sender];
-
-        emit Delegate(_proposalId, msg.sender, _to);
     }
 
     /** @dev Return tokens to user from DAO contract after voting.
@@ -243,6 +221,32 @@ contract DAO is IDAO {
         proposal.voters[msg.sender] = 0;
 
         emit UnVoted(_proposalId, msg.sender);
+    }
+
+    /** @notice Delegating votes to provided address for a specific proposal.
+     * @param _proposalId Id of the calling proposal.
+     * @param _to Address to delegate to.
+     */
+    function delegate(uint256 _proposalId, address _to)
+        external
+        proposalInProgress(_proposalId)
+        proposalExist(_proposalId)
+        proposalIsOpened(_proposalId)
+    {
+        require(
+            msg.sender != _to,
+            "DAO: You can't delegate tokens too yoursels"
+        );
+
+        delegates[_to][_proposalId].push(msg.sender);
+        delegatedVoting[_proposalId][_to].delegated += balances[msg.sender];
+
+        withdrawLock[msg.sender] = (proposals[_proposalId].votingDeadline) >
+            withdrawLock[msg.sender]
+            ? (proposals[_proposalId].votingDeadline)
+            : withdrawLock[msg.sender];
+
+        emit Delegate(_proposalId, msg.sender, _to);
     }
 
     /** @dev Execute proposal calldata if voting is successful.
@@ -277,10 +281,20 @@ contract DAO is IDAO {
         minQuorum = _minQuorum;
     }
 
-    /** @dev Get how many tokens user stores on DAO contract.
+    /** @dev Get how many tokens proposal has.
+     * @param _proposalId Id of the calling proposal.
+     */
+    function getProposalBalance(uint256 _proposalId)
+        external
+        view
+        returns (uint256)
+    {
+        return proposals[_proposalId].sum;
+    }
+
+    /** @dev Get how many tokens user has on DAO.
      */
     function getVoterDaoBalance() external view returns (uint256) {
-        console.log(3 days);
         return balances[msg.sender];
     }
 
@@ -293,17 +307,14 @@ contract DAO is IDAO {
         uint256 _amount = balances[msg.sender] +
             delegatedVoting[_proposalId][msg.sender].delegated;
 
+        proposals[_proposalId].voters[msg.sender] = _amount;
+
         proposals[_proposalId].sum += _amount;
 
         withdrawLock[msg.sender] = (proposal.votingDeadline) >
             withdrawLock[msg.sender]
             ? (proposal.votingDeadline)
             : withdrawLock[msg.sender];
-
-        require(
-            balances[msg.sender] >= _amount,
-            "DAO: You have not enought tokens deposited for voting"
-        );
     }
 
     /** @dev Close proposal.
