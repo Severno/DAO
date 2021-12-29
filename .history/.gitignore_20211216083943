@@ -4,15 +4,10 @@ build
 dist
 .env
 .env-bsc_testnet
-.env-rinkeby_testnet
-.env-rinkeby
 .env-localhost
 .env-hardhat
 cache
 artifacts
 .vscode
+typechain-types
 .idea
-coverage.json
-coverage/
-docs/
-.DS_Store/
