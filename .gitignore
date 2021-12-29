@@ -16,3 +16,4 @@ coverage.json
 coverage/
 docs/
 .DS_Store/
+.history/
