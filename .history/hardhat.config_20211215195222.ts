@@ -2,8 +2,6 @@ import "@typechain/hardhat";
 import "@nomiclabs/hardhat-ethers";
 import "@nomiclabs/hardhat-waffle";
 import "solidity-coverage";
-import "hardhat-docgen";
-import "hardhat-contract-sizer";
 import "web3";
 import "./tasks";
 
@@ -20,6 +18,7 @@ const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.10",
     settings: {
+      viaIR: true,
       optimizer: {
         enabled: true,
         runs: 200,
@@ -51,16 +50,6 @@ const config: HardhatUserConfig = {
   },
   mocha: {
     timeout: 20000,
-  },
-  docgen: {
-    path: "./docs",
-    clear: true,
-    runOnCompile: true,
-  },
-  contractSizer: {
-    alphaSort: true,
-    runOnCompile: true,
-    disambiguatePaths: true,
   },
 };
 

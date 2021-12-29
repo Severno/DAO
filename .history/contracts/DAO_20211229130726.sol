@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.10;
+pragma solidity 0.8.10;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./IDAO.sol";
@@ -194,12 +194,11 @@ contract DAO is IDAO {
     /** @dev Return tokens to user from DAO contract after voting.
      * @param _proposalId Id of the calling proposal.
      */
-    function unVote(uint256 _proposalId) external {
+    function unVote(uint256 _proposalId) external shouldBeAVoter(_proposalId) {
         require(
             proposals[_proposalId].voters[msg.sender] != 0,
             "DAO: You're not a voter"
         );
-
         Proposal storage proposal = proposals[_proposalId];
 
         uint256 voterAmount = proposal.voters[msg.sender];

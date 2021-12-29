@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.10;
+pragma solidity 0.8.10;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./IDAO.sol";
@@ -44,14 +44,20 @@ contract DAO is IDAO {
      * @param _tokenAddress The address of the token that wiil be used for voting.
      * @param _minQuorum Minimum quorum for successful voting.
      */
-    constructor(address _tokenAddress, uint256 _minQuorum) {
+    constructor(address _tokenAddress, uint256 _minQuorum)
+        isValidMinQuorum(_minQuorum)
+    {
+        token = IERC20(_tokenAddress);
+        minQuorum = _minQuorum;
+        daoOwner = msg.sender;
+    }
+
+    modifier isValidMinQuorum(uint256 _minQuorum) {
         require(
             _minQuorum <= 49 && _minQuorum >= 15,
             "DAO: Minimum Quorum can't be more than 49% and less then 15%"
         );
-        token = IERC20(_tokenAddress);
-        minQuorum = _minQuorum;
-        daoOwner = msg.sender;
+        _;
     }
 
     modifier proposalExist(uint256 _proposalId) {
@@ -82,6 +88,14 @@ contract DAO is IDAO {
         require(
             !_isProposalDeadlinePassed(_proposalId),
             "DAO: You're trying to call proposal that's is outdated"
+        );
+        _;
+    }
+
+    modifier shouldBeAVoter(uint256 _proposalId) {
+        require(
+            proposals[_proposalId].voters[msg.sender] != 0,
+            "DAO: You're not a voter"
         );
         _;
     }
@@ -126,12 +140,7 @@ contract DAO is IDAO {
         address _recipient,
         string memory _description,
         bytes memory _byteCode
-    ) external payable returns (uint256 _proposalId) {
-        require(
-            token.balanceOf(msg.sender) > 0,
-            "DAO: You are not a token owner"
-        );
-
+    ) external payable onlyTokenHolder returns (uint256 _proposalId) {
         Proposal storage proposal = proposals[proposalId];
 
         proposal.creator = msg.sender;
@@ -194,12 +203,7 @@ contract DAO is IDAO {
     /** @dev Return tokens to user from DAO contract after voting.
      * @param _proposalId Id of the calling proposal.
      */
-    function unVote(uint256 _proposalId) external {
-        require(
-            proposals[_proposalId].voters[msg.sender] != 0,
-            "DAO: You're not a voter"
-        );
-
+    function unVote(uint256 _proposalId) external shouldBeAVoter(_proposalId) {
         Proposal storage proposal = proposals[_proposalId];
 
         uint256 voterAmount = proposal.voters[msg.sender];
